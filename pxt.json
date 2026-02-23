@@ -1,0 +1,13 @@
+{
+  "name": "pxt-dht11-zac",
+  "version": "0.0.1",
+  "description": "DHT11 blocks for micro:bit (bare or module version).",
+  "dependencies": {
+    "core": "*"
+  },
+  "files": [
+    "main.ts",
+    "README.md"
+  ],
+  "public": true
+}
