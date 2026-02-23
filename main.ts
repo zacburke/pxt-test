@@ -8,18 +8,18 @@ namespace dht11 {
     let lastHumidity = 0
     let lastOk = false
 
-    // Debug control
-    let debugEnabled = false
+    // Always-on serial debugging
+    let serialInitDone = false
 
-    export enum DhtReading {
-        //% block="temperature (°C)"
-        TemperatureC = 0,
-        //% block="humidity (%)"
-        Humidity = 1
+    function initSerialOnce(): void {
+        if (serialInitDone) return
+        serialInitDone = true
+        serial.redirectToUSB()
+        serial.writeLine("[dht11] serial debug ON")
     }
 
     function dbg(msg: string): void {
-        if (!debugEnabled) return
+        initSerialOnce()
         serial.writeLine("[dht11] " + msg)
     }
 
@@ -36,7 +36,9 @@ namespace dht11 {
     }
 
     function readRaw(pin: DigitalPin): boolean {
-        // Strongly recommended even if the module has a resistor
+        initSerialOnce()
+
+        // Even if the module has a resistor, this helps stabilize the idle-high level.
         pins.setPull(pin, PinPullMode.PullUp)
 
         // Idle high
@@ -52,7 +54,6 @@ namespace dht11 {
         control.waitMicros(40)
 
         // Sensor response: ~80us low then ~80us high
-        // pulseIn returns microseconds (0 means timeout)
         const respLow = pins.pulseIn(pin, PulseValue.Low, 1500)
         const respHigh = pins.pulseIn(pin, PulseValue.High, 1500)
         dbg(`resp low=${respLow}us high=${respHigh}us`)
@@ -61,9 +62,8 @@ namespace dht11 {
             return false
         }
 
-        // Read 40 bits: each is ~50us low + (26-28us high for 0, ~70us high for 1)
+        // Read 40 bits
         const data = [0, 0, 0, 0, 0]
-
         for (let i = 0; i < 40; i++) {
             const lowLen = pins.pulseIn(pin, PulseValue.Low, 1500)
             const highLen = pins.pulseIn(pin, PulseValue.High, 1500)
@@ -76,12 +76,12 @@ namespace dht11 {
             const byteIndex = (i / 8) | 0
             data[byteIndex] = (data[byteIndex] << 1) & 0xFF
 
-            // Threshold: pick 50us (between ~28 and ~70)
+            // DHT11: 0 => ~26-28us high, 1 => ~70us high
             const bit = highLen > 50 ? 1 : 0
             data[byteIndex] |= bit
 
-            if (debugEnabled && (i < 8 || i >= 32)) {
-                // Log a few bits (first byte + last byte) to keep serial noise down
+            // Keep output readable: log first 8 and last 8 bits
+            if (i < 8 || i >= 32) {
                 dbg(`bit ${i}: low=${lowLen} high=${highLen} -> ${bit}`)
             }
         }
@@ -94,7 +94,6 @@ namespace dht11 {
             return false
         }
 
-        // DHT11: integer bytes for humidity/temp
         lastHumidity = data[0]
         lastTempC = data[2]
         lastOk = true
@@ -106,24 +105,11 @@ namespace dht11 {
         const now = control.millis()
         if (now - lastReadMs < MIN_INTERVAL_MS && lastOk) return
 
+        dbg(`reading on pin=${pin}...`)
         lastOk = readRaw(pin)
         lastReadMs = now
 
-        if (!lastOk) {
-            dbg("read failed")
-        }
-    }
-
-    /**
-     * Enable or disable debug logging to the Serial console.
-     */
-    //% block="DHT11 set debug %enabled"
-    export function setDebug(enabled: boolean): void {
-        debugEnabled = enabled
-        if (debugEnabled) {
-            serial.redirectToUSB()
-            serial.writeLine("[dht11] debug enabled")
-        }
+        if (!lastOk) dbg("read failed")
     }
 
     /**
@@ -147,29 +133,22 @@ namespace dht11 {
     }
 
     /**
-     * Read a specific value from the DHT11 sensor.
+     * Combined read function.
      */
+    //% block="DHT11 read %what on pin %pin"
+    //% pin.fieldEditor="gridpicker" pin.fieldOptions.columns=4
+    export enum DhtReading {
+        //% block="temperature (°C)"
+        TemperatureC = 0,
+        //% block="humidity (%)"
+        Humidity = 1
+    }
+
     //% block="DHT11 read %what on pin %pin"
     //% pin.fieldEditor="gridpicker" pin.fieldOptions.columns=4
     export function read(pin: DigitalPin, what: DhtReading): number {
         ensureFresh(pin)
         if (!lastOk) return what == DhtReading.TemperatureC ? -999 : -1
         return what == DhtReading.TemperatureC ? lastTempC : lastHumidity
-    }
-
-    /**
-     * Convenience block: prints the last reading (or failure) to serial.
-     * Useful while debugging.
-     */
-    //% block="DHT11 debug print last reading"
-    export function debugPrintLast(): void {
-        if (!debugEnabled) {
-            serial.redirectToUSB()
-        }
-        if (lastOk) {
-            serial.writeLine(`[dht11] last: H=${lastHumidity}% T=${lastTempC}C`)
-        } else {
-            serial.writeLine("[dht11] last: FAILED")
-        }
     }
 }
